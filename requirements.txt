@@ -1,0 +1,4 @@
+groq
+pydantic
+networkx
+python-dotenv
