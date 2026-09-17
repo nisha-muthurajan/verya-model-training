@@ -1,10 +1,30 @@
 {
   "gemini-2.5-flash::backend": {
-    "successes": 30,
+    "successes": 60,
     "failures": 0
   },
   "llama-3.1-8b-instant::backend": {
     "successes": 0,
     "failures": 8
+  },
+  "llama-3.1-405b-reasoning::database": {
+    "successes": 0,
+    "failures": 2
+  },
+  "openai/gpt-oss-20b::backend": {
+    "successes": 0,
+    "failures": 8
+  },
+  "openai/gpt-oss-20b::database": {
+    "successes": 0,
+    "failures": 14
+  },
+  "kimi-k2::database": {
+    "successes": 0,
+    "failures": 5
+  },
+  "glm-4.5::database": {
+    "successes": 1,
+    "failures": 4
   }
 }

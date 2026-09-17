@@ -104,7 +104,7 @@ class AlgorithmDecision(BaseModel):
     requires_human_tiebreak: bool
     assumed_constraints: str = Field(default="")
     problem_type: str = Field(default="", description="only set for ML tasks, e.g. classification_tabular, nlp_classification")
-    source: str = Field(default="general", description="'general' or 'ml_benchmark' - set by code, never by the LLM")
+    source: str = Field(default="general", description="'ensemble' or legacy source values - set by code")
 
 
 class AlgorithmReport(BaseModel):

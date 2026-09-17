@@ -1,6 +1,6 @@
 from schema import WorkflowGraph, Flaw
 
-SENSITIVE_KEYWORDS = ["payment", "order", "post", "delete", "admin", "user data", "leave request", "approve"]
+SENSITIVE_KEYWORDS = ["payment", "order", "post", "delete", "admin", "user data", "leave request", "approve", "cart"]
 
 
 def rule_based_checks(graph: WorkflowGraph) -> list[Flaw]:
@@ -9,7 +9,7 @@ def rule_based_checks(graph: WorkflowGraph) -> list[Flaw]:
 
     for t in graph.tasks:
         # Rule 1: sensitive-sounding backend tasks should depend on an auth task
-        if t.type == "backend" and any(k in t.name.lower() for k in SENSITIVE_KEYWORDS):
+        if t.type == "backend" and any(k in f"{t.name} {t.description}".lower() for k in SENSITIVE_KEYWORDS):
             if auth_task_ids and not any(dep in auth_task_ids for dep in t.depends_on):
                 flaws.append(Flaw(
                     task_ids=[t.id],

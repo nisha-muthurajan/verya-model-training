@@ -1,7 +1,6 @@
 from workflow_model import understand_workflow
 from validate import validate_graph
 from flaw_model import detect_flaws
-from rules import rule_based_checks
 from stack_model import recommend_stack, validate_stack
 from stack_rules import rule_based_stack_checks
 from algorithm_model import recommend_algorithms
@@ -23,30 +22,8 @@ def get_valid_workflow(requirement: str, max_retries: int = 2):
     raise ValueError(f"Could not produce valid graph after {max_retries + 1} attempts: {last_errors}")
 
 
-def get_flaw_report(graph):
-    llm_report = detect_flaws(graph)
-    rule_flaws = rule_based_checks(graph)
-
-    # Dedupe by (task_id, type) only — same logic as stack validation
-    seen = {(f.task_ids[0], f.type) for f in llm_report.flaws if f.task_ids}
-    for rf in rule_flaws:
-        key = (rf.task_ids[0], rf.type) if rf.task_ids else None
-        if key not in seen:
-            llm_report.flaws.append(rf)
-            if key:
-                seen.add(key)
-
-    llm_report.is_safe_to_proceed = not any(
-        f.severity in ("high", "critical") for f in llm_report.flaws
-    )
-    return llm_report
-
-
-def run_full_pipeline(requirement: str):
-    """End-to-end: requirement -> graph -> flaw report"""
-    graph = get_valid_workflow(requirement)
-    report = get_flaw_report(graph)
-    return graph, report
+def get_flaw_report(graph, event_log_path=None):
+    return detect_flaws(graph, event_log_path=event_log_path)
 
 
 def decide_algorithms(graph, original_requirement: str):
@@ -105,17 +82,19 @@ def decide_ai_models(graph, algorithm_report, risk_tolerance: float = 0.5):
 
 
 # Add to pipeline.py
-from risk_heuristic import predict_risk_heuristic
+from risk_ensemble import predict_risk_ensemble
 from schema import RiskReport
 
 
-def predict_risks(graph, algorithm_report, model_report):
+def predict_risks(graph, algorithm_report, model_report, event_log_path=None):
     algo_lookup = {d.task_id: d for d in algorithm_report.decisions}
     model_lookup = {d.task_id: d for d in model_report.decisions}
 
     predictions = []
     for t in graph.tasks:
-        pred = predict_risk_heuristic(t, algo_lookup.get(t.id), model_lookup.get(t.id))
+        pred = predict_risk_ensemble(
+            t, algo_lookup.get(t.id), model_lookup.get(t.id), event_log_path=event_log_path
+        )
         predictions.append(pred)
 
     return RiskReport(predictions=predictions)
@@ -190,7 +169,7 @@ def record_task_outcome(model_decision, task, verification_report=None, human_ov
 
 # Add to pipeline.py (this consolidates everything into one entry point)
 
-def run_full_pipeline(requirement: str, user_stack: dict = None, risk_tolerance: float = 0.5):
+def run_full_pipeline(requirement: str, user_stack: dict = None, risk_tolerance: float = 0.5, event_log_path=None):
     """
     The complete Verya pipeline, Models 1-8, in sequence.
     Returns a single dict with every stage's output, ready for a dashboard or demo UI.
@@ -202,7 +181,7 @@ def run_full_pipeline(requirement: str, user_stack: dict = None, risk_tolerance:
     result["workflow"] = graph
 
     # Model 2: Flaw Detection
-    flaw_report = get_flaw_report(graph)
+    flaw_report = get_flaw_report(graph, event_log_path=event_log_path)
     result["flaws"] = flaw_report
 
     if not flaw_report.is_safe_to_proceed:
@@ -228,7 +207,7 @@ def run_full_pipeline(requirement: str, user_stack: dict = None, risk_tolerance:
     result["model_routing"] = model_report
 
     # Model 6: Failure/Risk Prediction
-    risk_report = predict_risks(graph, algo_report, model_report)
+    risk_report = predict_risks(graph, algo_report, model_report, event_log_path=event_log_path)
     result["risk"] = risk_report
 
     # Flag any task whose predicted risk crosses a threshold, for visibility

@@ -4,30 +4,20 @@ from groq import Groq
 from dotenv import load_dotenv
 from schema import StackRecommendation, StackValidationReport, WorkflowGraph
 from prompts import STACK_RECOMMENDATION_PROMPT, STACK_VALIDATION_PROMPT
+from stack_ensemble import recommend_stack_ensemble
 
 load_dotenv()
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY")) if os.getenv("GROQ_API_KEY") else None
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def recommend_stack(graph: WorkflowGraph) -> StackRecommendation:
-    tasks_summary = "\n".join(
-        f"- {t.name} ({t.type}): {t.description}" for t in graph.tasks
-    )
-    response = client.chat.completions.create(
-        model=GROQ_MODEL,
-        messages=[
-            {"role": "system", "content": STACK_RECOMMENDATION_PROMPT + "\nRespond with ONLY valid JSON."},
-            {"role": "user", "content": f"Tasks:\n{tasks_summary}"}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.3
-    )
-    raw = response.choices[0].message.content
-    return StackRecommendation(**json.loads(raw))
+    return recommend_stack_ensemble(graph.tasks)
 
 
 def validate_stack(graph: WorkflowGraph, user_stack: dict) -> StackValidationReport:
+    if client is None:
+        raise RuntimeError("Stack validation requires GROQ_API_KEY when a user stack is supplied.")
     tasks_summary = "\n".join(
         f"- {t.name} ({t.type}): {t.description}" for t in graph.tasks
     )

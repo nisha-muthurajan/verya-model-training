@@ -23,11 +23,11 @@ for i in range(15):
         verification_report=fake_report
     )
 
-print("\n=== Simulating 4 failures for llama-3.1-8b-instant on 'backend' tasks ===")
+print("\n=== Simulating 4 failures for openai/gpt-oss-20b on 'backend' tasks ===")
 for i in range(4):
     fake_report = VerificationReport(task_id="sim", passed=False, verifier_agreement=1.0, requires_human_review=True)
     record_task_outcome(
-        model_decision=type("obj", (), {"chosen_model": "llama-3.1-8b-instant"})(),
+        model_decision=type("obj", (), {"chosen_model": "openai/gpt-oss-20b"})(),
         task=type("obj", (), {"type": "backend"})(),
         verification_report=fake_report
     )

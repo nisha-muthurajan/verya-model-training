@@ -2,3 +2,4 @@ groq
 pydantic
 networkx
 python-dotenv
+pm4py
