@@ -1,22 +1,22 @@
-# test_stack.py
-from pipeline import get_valid_workflow, decide_stack
+from schema import Task, WorkflowGraph
+from stack_rules import rule_based_stack_checks
 
-req = "Build an e-commerce platform with authentication, product search, payments and order tracking."
-graph = get_valid_workflow(req)
 
-print("=== Case A: no stack given (recommend) ===")
-result_a = decide_stack(graph)
-rec = result_a["recommendation"]
-print(f"Summary: {rec.summary}\n")
-for c in rec.components:
-    print(f"  [{c.category}] {c.name} (confidence={c.confidence}) — {c.reasoning}")
+def test_stack_keys_values_are_normalized_and_blank_database_is_missing():
+    graph = WorkflowGraph(tasks=[
+        Task(id="t1", name="Storage", type="database", description="Store records"),
+        Task(id="t2", name="Model", type="ml", description="Train model"),
+    ])
 
-print("\n=== Case B: user gives a stack (validate) ===")
-user_stack = {"frontend": "React", "backend": "PHP", "database": "SQLite"}
-result_b = decide_stack(graph, user_stack=user_stack)
-report = result_b["report"]
-print(f"Is compatible: {report.is_compatible}")
-for i in report.issues:
-    print(f"  [{i.severity.upper()}] ({i.category}) {i.issue}")
-    if i.suggested_alternative:
-        print(f"    Suggested: {i.suggested_alternative}")
+    issues = rule_based_stack_checks(graph, {" BACKEND ": "  PHP  ", " DATABASE ": " PostgreSQL "})
+
+    assert [issue.category for issue in issues] == ["ml_framework"]
+    assert rule_based_stack_checks(graph, {"database": "   "})[0].severity == "critical"
+
+
+def test_unexpected_stack_value_types_are_ignored_safely():
+    graph = WorkflowGraph(tasks=[
+        Task(id="t1", name="Storage", type="database", description="Store records"),
+    ])
+
+    assert rule_based_stack_checks(graph, {"database": ["PostgreSQL"]})[0].severity == "critical"

@@ -1,4 +1,8 @@
+import pytest
+
 from algorithm_filter import tasks_needing_algorithm_decision
+from pydantic import ValidationError
+from schema import Flaw, FlawReport, FlawType, Severity, Task
 from validate import validate_graph
 from workflow_ensemble import WORKFLOW_ADVISORS, understand_workflow_ensemble
 
@@ -22,3 +26,21 @@ def test_workflow_ensemble_builds_valid_blog_graph(monkeypatch):
     assert validate_graph(graph) == []
     assert any("Post" in task.name for task in graph.tasks)
     assert any(task.type == "backend" for task in graph.tasks)
+
+
+def test_schema_rejects_invalid_task_dependencies():
+    with pytest.raises(ValidationError):
+        Task(id="t1", name="Task", type="backend", description="Work", depends_on=["t1"])
+
+
+def test_flaw_report_safety_flag_matches_severity():
+    flaw = Flaw(
+        task_ids=["t1"],
+        type=FlawType.security,
+        severity=Severity.high,
+        description="Unsafe",
+        suggested_fix="Fix it",
+    )
+
+    with pytest.raises(ValidationError):
+        FlawReport(flaws=[flaw], is_safe_to_proceed=True)

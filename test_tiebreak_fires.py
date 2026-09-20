@@ -1,16 +1,18 @@
-# test_tiebreak_fires.py
-from pipeline import get_valid_workflow, decide_algorithms, decide_ai_models
+from complexity_scorer import compute_complexity
+from schema import Task
 
-# Deliberately vague requirement — should produce low algorithm_confidence on some tasks
-req = "Build a simple internal tool to look up employee records by ID."
-graph = get_valid_workflow(req)
-algo_report = decide_algorithms(graph, req)
 
-print("Algorithm confidences:")
-for d in algo_report.decisions:
-    print(f"  [{d.task_id}] confidence={d.confidence} tiebreak={d.requires_human_tiebreak}")
+def test_uncertain_algorithm_inputs_raise_complexity_and_preserve_breakdown():
+    task = Task(id="t1", name="Employee lookup", type="backend", description="Look up employee records")
 
-model_report = decide_ai_models(graph, algo_report, risk_tolerance=0.5)
-print("\nModel routing:")
-for d in model_report.decisions:
-    print(f"  [{d.task_id}] {d.chosen_model} tiebreak={d.requires_human_tiebreak}")
+    score, breakdown = compute_complexity(
+        task,
+        algorithm_confidence=0.4,
+        requires_tiebreak=True,
+        risk_tolerance=0.5,
+    )
+
+    assert score > 0.35
+    assert breakdown["algorithm_uncertainty"] == 0.6
+    assert breakdown["algorithm_flagged_tiebreak"] is True
+    assert breakdown["risk_tolerance_used"] == 0.5

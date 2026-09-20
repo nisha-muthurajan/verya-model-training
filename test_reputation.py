@@ -1,44 +1,25 @@
-# test_reputation.py
-from pipeline import get_valid_workflow, decide_algorithms, decide_ai_models, record_task_outcome
-from reputation_model import get_all_reputation_scores, compute_trust_score
-from schema import VerificationReport
+from reputation_model import compute_trust_score
+from reputation_store import get_all_scores, get_raw_counts, record_outcome
 
-req = "Build a blog where users can write and read posts."
-graph = get_valid_workflow(req)
-algo_report = decide_algorithms(graph, req)
-model_report = decide_ai_models(graph, algo_report, risk_tolerance=0.5)
 
-print("=== Before any outcomes recorded ===")
-for t in graph.tasks[:2]:
-    md = next(d for d in model_report.decisions if d.task_id == t.id)
-    rep = compute_trust_score(md.chosen_model, t.type)
-    print(f"[{t.type}] {md.chosen_model}: trust={rep.trust_score} ({rep.confidence_level})")
+def test_reputation_round_trip_and_bayesian_score(monkeypatch, tmp_path):
+    monkeypatch.setenv("REPUTATION_STORE_PATH", str(tmp_path / "nested" / "reputation.json"))
 
-print("\n=== Simulating 15 successful outcomes for gemini-2.5-flash on 'backend' tasks ===")
-for i in range(15):
-    fake_report = VerificationReport(task_id="sim", passed=True, verifier_agreement=1.0, requires_human_review=False)
-    record_task_outcome(
-        model_decision=type("obj", (), {"chosen_model": "gemini-2.5-flash"})(),
-        task=type("obj", (), {"type": "backend"})(),
-        verification_report=fake_report
-    )
+    record_outcome("model-a", "backend", True)
+    record_outcome("model-a", "backend", False)
 
-print("\n=== Simulating 4 failures for openai/gpt-oss-20b on 'backend' tasks ===")
-for i in range(4):
-    fake_report = VerificationReport(task_id="sim", passed=False, verifier_agreement=1.0, requires_human_review=True)
-    record_task_outcome(
-        model_decision=type("obj", (), {"chosen_model": "openai/gpt-oss-20b"})(),
-        task=type("obj", (), {"type": "backend"})(),
-        verification_report=fake_report
-    )
+    assert get_raw_counts("model-a", "backend") == (1, 1)
+    assert get_all_scores()["model-a::backend"] == {"successes": 1, "failures": 1}
+    score = compute_trust_score("model-a", "backend")
+    assert score.trust_score == 0.5
+    assert score.total_observations == 2
+    assert score.confidence_level == "unproven"
 
-print("\n=== All reputation scores after simulated history ===")
-for score in get_all_reputation_scores():
-    print(f"  {score.model_name} / {score.task_type}: trust={score.trust_score} "
-          f"({score.successes}✓ {score.failures}✗, {score.confidence_level})")
 
-print("\n=== Re-run routing for a NEW backend task — does it now avoid the low-trust model? ===")
-model_report_2 = decide_ai_models(graph, algo_report, risk_tolerance=0.3)
-for d in model_report_2.decisions:
-    if d.task_id in [t.id for t in graph.tasks if t.type == "backend"]:
-        print(f"  [{d.task_id}] chosen: {d.chosen_model}")
+def test_malformed_reputation_entries_are_ignored(monkeypatch, tmp_path):
+    path = tmp_path / "reputation.json"
+    path.write_text('{"valid::backend": {"successes": 2, "failures": 1}, "bad::backend": {"successes": -1, "failures": 1}}')
+    monkeypatch.setenv("REPUTATION_STORE_PATH", str(path))
+
+    assert get_raw_counts("valid", "backend") == (2, 1)
+    assert get_raw_counts("bad", "backend") == (0, 0)

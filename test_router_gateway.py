@@ -34,3 +34,25 @@ def test_router_accepts_gateway_model(monkeypatch):
 
     assert decision.chosen_model == "deepseek-chat"
     assert decision.chosen_provider == "deepseek"
+
+
+def test_router_ignores_malformed_gateway_response(monkeypatch):
+    monkeypatch.setenv("MODEL_ROUTER_ENDPOINT", "https://router.invalid/v1/route")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b"not-json"
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: FakeResponse())
+    task = Task(id="t1", name="Build API", type="backend", description="Implement a REST API")
+
+    decision = select_model(task)
+
+    assert decision.chosen_model
+    assert decision.chosen_provider != ""

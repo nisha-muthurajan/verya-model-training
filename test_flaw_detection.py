@@ -1,29 +1,32 @@
-from pipeline import get_valid_workflow, get_flaw_report, run_full_pipeline
+from rules import rule_based_checks
+from schema import Task, WorkflowGraph
 
-print("=== Test 1: single requirement, flaw detection only ===")
-req = "Build a blog where users can write and read posts."
-graph = get_valid_workflow(req)
-report = get_flaw_report(graph)
 
-print(f"REQUIREMENT: {req}")
-print(f"Safe to proceed: {report.is_safe_to_proceed}")
-for f in report.flaws:
-    print(f"  [{f.severity.upper()}] ({f.type}) tasks={f.task_ids}: {f.description}")
-    print(f"    Fix: {f.suggested_fix}")
+def test_sensitive_backend_requires_authentication_ancestor():
+    graph = WorkflowGraph(tasks=[
+        Task(id="t1", name="Authentication", type="auth", description="Validate users"),
+        Task(id="t2", name="Session Gateway", type="backend", description="Create sessions", depends_on=["t1"]),
+        Task(id="t3", name="Order API", type="backend", description="Create orders", depends_on=["t2"]),
+    ])
 
-print("\n=== Test 2: full pipeline on multiple requirements ===")
-test_requirements = [
-    "Build a blog where users can write and read posts.",
-    "Build a food delivery app with restaurant listings, cart, and live tracking.",
-    "Build an internal HR portal for leave requests and approvals.",
-]
+    assert rule_based_checks(graph) == []
 
-for req in test_requirements:
-    graph, report = run_full_pipeline(req)
-    print(f"\nREQUIREMENT: {req}")
-    print(f"Tasks: {len(graph.tasks)} | Safe to proceed: {report.is_safe_to_proceed}")
-    if report.flaws:
-        for f in report.flaws:
-            print(f"  [{f.severity.upper()}] ({f.type}) tasks={f.task_ids}: {f.description}")
-    else:
-        print("  No flaws found.")
+
+def test_missing_authentication_is_reported_for_sensitive_backend():
+    graph = WorkflowGraph(tasks=[
+        Task(id="t1", name="Payment API", type="backend", description="Capture payments"),
+    ])
+
+    findings = rule_based_checks(graph)
+
+    assert len(findings) == 1
+    assert findings[0].severity == "high"
+    assert "no Authentication task exists" in findings[0].description
+
+
+def test_hyphenated_post_processing_is_not_a_sensitive_post_operation():
+    graph = WorkflowGraph(tasks=[
+        Task(id="t1", name="Batch Worker", type="backend", description="Run post-processing"),
+    ])
+
+    assert rule_based_checks(graph) == []

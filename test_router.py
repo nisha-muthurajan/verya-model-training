@@ -1,24 +1,24 @@
-# test_router.py
-from pipeline import get_valid_workflow, decide_algorithms, decide_ai_models
+from router_model import select_model
+from schema import Task
 
-req = ("Build an e-commerce platform with authentication, product search, payments and order tracking, "
-       "1 million products, <100ms search target.")
 
-graph = get_valid_workflow(req)
-algo_report = decide_algorithms(graph, req)
+def test_router_selects_from_local_catalog_without_gateway(monkeypatch):
+    monkeypatch.delenv("MODEL_ROUTER_ENDPOINT", raising=False)
+    task = Task(id="t1", name="Build API", type="backend", description="Implement a REST API")
 
-print("=== Cost-optimized (risk_tolerance=0.1) ===")
-report_cost = decide_ai_models(graph, algo_report, risk_tolerance=0.1)
-for d in report_cost.decisions:
-    print(f"  [{d.task_id}] {d.chosen_model} ({d.chosen_provider}) tier={d.required_capability_tier} tiebreak={d.requires_human_tiebreak}")
+    decision = select_model(task, risk_tolerance=" 0.1 ")
 
-print("\n=== Capability-optimized (risk_tolerance=0.9) ===")
-report_cap = decide_ai_models(graph, algo_report, risk_tolerance=0.9)
-for d in report_cap.decisions:
-    print(f"  [{d.task_id}] {d.chosen_model} ({d.chosen_provider}) tier={d.required_capability_tier} tiebreak={d.requires_human_tiebreak}")
+    assert decision.chosen_model
+    assert decision.chosen_provider
+    assert decision.complexity_breakdown["risk_tolerance_used"] == 0.1
 
-print("\n=== Detail view: one decision's full reasoning ===")
-sample = report_cost.decisions[0]
-print(f"Task: {sample.task_id}")
-print(f"Reasoning: {sample.reasoning}")
-print(f"Breakdown: {sample.complexity_breakdown}")
+
+def test_router_tie_breaking_is_deterministic(monkeypatch):
+    monkeypatch.delenv("MODEL_ROUTER_ENDPOINT", raising=False)
+    monkeypatch.setattr("router_model.get_catalog", lambda: [
+        {"name": "z-model", "provider": "provider", "cost_tier": 1, "capability_tier": 2},
+        {"name": "a-model", "provider": "provider", "cost_tier": 1, "capability_tier": 2},
+    ])
+    task = Task(id="t1", name="Build API", type="backend", description="Implement a REST API")
+
+    assert select_model(task).chosen_model == "a-model"

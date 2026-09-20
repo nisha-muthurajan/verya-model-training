@@ -1,16 +1,19 @@
 # test_algorithm_combined.py
-from pipeline import get_valid_workflow, decide_algorithms
+from algorithm_model import recommend_algorithms
+from schema import Task, WorkflowGraph
 
-req = ("Build a product recommendation system that uses machine learning to suggest items, "
-       "with 1 million products, high read frequency, and search results needed under 100ms.")
 
-graph = get_valid_workflow(req)
-report = decide_algorithms(graph, req)
+def test_algorithm_recommendations_cover_backend_database_and_ml_tasks():
+    requirement = "Build a product recommendation system with one million products."
+    graph = WorkflowGraph(tasks=[
+        Task(id="t1", name="Product Storage", type="database", description="Store products"),
+        Task(id="t2", name="Recommendation API", type="backend", description="Serve recommendations"),
+        Task(id="t3", name="Recommendation Model", type="ml", description="Classify product preferences"),
+    ])
 
-for d in report.decisions:
-    tag = f"[{d.source.upper()}: {d.problem_type}]" if d.source == "ml_benchmark" else "[GENERAL]"
-    print(f"\n{tag} [{d.task_id}] {d.chosen_algorithm} (confidence={d.confidence})")
-    print(f"  Reasoning: {d.reasoning}")
-    print(f"  Human tiebreak: {d.requires_human_tiebreak}")
-    for alt in d.alternatives_considered:
-        print(f"    Alt: {alt.name} — {alt.pros} | {alt.cons}")
+    report = recommend_algorithms(graph, requirement)
+
+    assert [decision.task_id for decision in report.decisions] == ["t1", "t2", "t3"]
+    assert all(decision.chosen_algorithm for decision in report.decisions)
+    assert all(0 <= decision.confidence <= 1 for decision in report.decisions)
+    assert report.decisions[-1].problem_type == "classification_tabular"

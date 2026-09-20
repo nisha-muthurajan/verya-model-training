@@ -1,15 +1,20 @@
 # test_risk.py
-from pipeline import get_valid_workflow, decide_algorithms, decide_ai_models, predict_risks
+from risk_ensemble import predict_risk_ensemble
+from schema import Task
 
-req = ("Build an e-commerce platform with authentication, product search, payments and order tracking, "
-       "1 million products, <100ms search target.")
 
-graph = get_valid_workflow(req)
-algo_report = decide_algorithms(graph, req)
-model_report = decide_ai_models(graph, algo_report, risk_tolerance=0.5)
-risk_report = predict_risks(graph, algo_report, model_report)
+def test_risk_prediction_is_bounded_and_deterministic():
+    task = Task(
+        id="t1",
+        name="Payment API",
+        type="backend",
+        description="Process payment and authorize the transaction",
+        depends_on=["t2", "t3"],
+    )
 
-for p in sorted(risk_report.predictions, key=lambda x: -x.failure_probability):
-    print(f"[{p.task_id}] risk={p.failure_probability} severity={p.severity_if_failed}")
-    for f in p.risk_factors:
-        print(f"    - {f}")
+    first = predict_risk_ensemble(task)
+    second = predict_risk_ensemble(task)
+
+    assert first.model_dump() == second.model_dump()
+    assert 0 <= first.failure_probability <= 1
+    assert first.severity_if_failed in {"low", "medium", "high", "critical"}
