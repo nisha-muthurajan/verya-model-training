@@ -53,6 +53,77 @@ def _normalize_json_content(content: object) -> str:
     return content
 
 
+def _normalize_provider_config(provider: object) -> dict | None:
+    if not isinstance(provider, dict):
+        return None
+
+    url = provider.get("url")
+    model = provider.get("model")
+    if not isinstance(url, str) or not url.strip() or not isinstance(model, str) or not model.strip():
+        return None
+
+    protocol = provider.get("protocol", "openai")
+    if not isinstance(protocol, str):
+        return None
+    protocol = protocol.strip().lower()
+    if protocol in {"openai-compatible", "openai_compatible"}:
+        protocol = "openai"
+    if protocol not in {"openai", "gemini"}:
+        return None
+
+    api_key = provider.get("api_key", "")
+    if api_key is None:
+        api_key = ""
+    elif not isinstance(api_key, str):
+        return None
+
+    api_key_env = provider.get("api_key_env", "")
+    if api_key_env is None:
+        api_key_env = ""
+    elif not isinstance(api_key_env, str):
+        return None
+
+    timeout = provider.get("timeout", 60)
+    if isinstance(timeout, bool):
+        return None
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError):
+        return None
+    if timeout <= 0:
+        return None
+
+    name = provider.get("name", model)
+    if not isinstance(name, str) or not name.strip():
+        name = model
+
+    return {
+        "name": name.strip(),
+        "url": url.strip(),
+        "model": model.strip(),
+        "protocol": protocol,
+        "api_key": api_key.strip(),
+        "api_key_env": api_key_env.strip(),
+        "timeout": timeout,
+    }
+
+
+def _parse_provider_configs(raw: str) -> list[dict]:
+    try:
+        providers = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError("WORKFLOW_MODEL_ENDPOINTS must be a JSON array") from error
+
+    if not isinstance(providers, list):
+        raise ValueError("WORKFLOW_MODEL_ENDPOINTS must be a JSON array")
+
+    return [
+        normalized
+        for provider in providers
+        if (normalized := _normalize_provider_config(provider)) is not None
+    ]
+
+
 def _task(task_id: str, name: str, task_type: str, description: str, depends_on: list[str] | None = None) -> Task:
     return Task(
         id=task_id,
@@ -157,17 +228,12 @@ def _configured_provider_graphs(requirement: str) -> list[WorkflowGraph]:
                 "model": "glm-4.5",
                 "api_key_env": "ZAI_API_KEY",
             })
-        return _request_provider_graphs(requirement, providers)
+        return _request_provider_graphs(
+            requirement,
+            [normalized for provider in providers if (normalized := _normalize_provider_config(provider)) is not None],
+        )
 
-    try:
-        providers = json.loads(endpoints)
-    except json.JSONDecodeError as error:
-        raise ValueError("WORKFLOW_MODEL_ENDPOINTS must be a JSON array") from error
-
-    if not isinstance(providers, list):
-        raise ValueError("WORKFLOW_MODEL_ENDPOINTS must be a JSON array")
-
-    return _request_provider_graphs(requirement, providers)
+    return _request_provider_graphs(requirement, _parse_provider_configs(endpoints))
 
 
 def _request_provider_graphs(requirement: str, providers: list[dict]) -> list[WorkflowGraph]:
@@ -176,12 +242,11 @@ def _request_provider_graphs(requirement: str, providers: list[dict]) -> list[Wo
     for provider in providers:
         if not isinstance(provider, dict):
             continue
-        url = provider.get("url")
-        model = provider.get("model")
-        if not isinstance(url, str) or not url.strip() or not isinstance(model, str) or not model.strip():
+        provider = _normalize_provider_config(provider)
+        if provider is None:
             continue
-        url = url.strip()
-        model = model.strip()
+        url = provider["url"]
+        model = provider["model"]
         api_key = provider.get("api_key") or os.getenv(provider.get("api_key_env", ""), "")
         if provider.get("protocol") == "gemini":
             url = url.format(model=model) + f"?key={api_key}"
