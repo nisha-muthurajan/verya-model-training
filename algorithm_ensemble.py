@@ -21,7 +21,7 @@ SELECTOR_PROFILES = (
     SelectorProfile("scikit-learn", "classical algorithms and validation", 1.2),
     SelectorProfile("Auto-sklearn", "automated preprocessing and model search", 1.0),
     SelectorProfile("TPOT", "pipeline and hyperparameter optimization", 1.0),
-    SelectorProfile("FLAML", "fast, low-cost tabular search", 1.1),
+    SelectorProfile("FLAML", "fast, low-cost tabular  search", 1.1),
     SelectorProfile("PyCaret", "rapid baseline comparison", 0.9),
     SelectorProfile("H2O AutoML", "broad tabular leaderboard and ensembles", 1.0),
     SelectorProfile("MLJAR Supervised", "explainable AutoML reports", 0.9),
