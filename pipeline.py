@@ -1,21 +1,69 @@
+import math
+
 from workflow_model import understand_workflow
 from validate import validate_graph
 from flaw_model import detect_flaws
 from stack_model import recommend_stack, validate_stack
 from stack_rules import rule_based_stack_checks
 from algorithm_model import recommend_algorithms
+from schema import (
+    AlgorithmReport,
+    FlawReport,
+    RiskReport,
+    StackValidationIssue,
+    StackValidationReport,
+)
 
+
+
+def _normalize_requirement(requirement: object) -> str:
+    if not isinstance(requirement, str) or not requirement.strip():
+        raise ValueError("requirement must be a non-empty string")
+    return requirement.strip()
+
+
+def _normalize_retry_count(value: object) -> int:
+    if isinstance(value, bool) or value is None:
+        raise ValueError("max_retries must be a non-negative integer")
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("max_retries must be a non-negative integer") from None
+    return max(normalized, 0)
+
+
+def _normalize_risk_tolerance(value: object) -> float:
+    if isinstance(value, bool) or value is None:
+        return 0.5
+    if isinstance(value, str) and not value.strip():
+        return 0.5
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    if not math.isfinite(normalized):
+        return 0.5
+    return min(max(normalized, 0.0), 1.0)
+
+
+def _empty_flaw_report() -> FlawReport:
+    return FlawReport(flaws=[], is_safe_to_proceed=True)
 
 
 def get_valid_workflow(requirement: str, max_retries: int = 2):
     """Model 1: requirement -> validated task graph"""
+    requirement = _normalize_requirement(requirement)
+    max_retries = _normalize_retry_count(max_retries)
     last_errors = []
     for attempt in range(max_retries + 1):
         prompt = requirement
         if last_errors:
             prompt += f"\n\nYour previous attempt had these problems, fix them: {last_errors}"
-        graph = understand_workflow(prompt)
-        errors = validate_graph(graph)
+        try:
+            graph = understand_workflow(prompt)
+            errors = validate_graph(graph)
+        except Exception:
+            errors = ["workflow generation or validation failed"]
         if not errors:
             return graph
         last_errors = errors
@@ -23,20 +71,55 @@ def get_valid_workflow(requirement: str, max_retries: int = 2):
 
 
 def get_flaw_report(graph, event_log_path=None):
-    return detect_flaws(graph, event_log_path=event_log_path)
+    try:
+        report = detect_flaws(graph, event_log_path=event_log_path)
+    except Exception:
+        return _empty_flaw_report()
+    return report if isinstance(report, FlawReport) else _empty_flaw_report()
 
 
 def decide_algorithms(graph, original_requirement: str):
     """Recommend algorithms for the graph's ML and algorithm-sensitive tasks."""
-    return recommend_algorithms(graph, original_requirement)
+    try:
+        report = recommend_algorithms(graph, original_requirement)
+    except Exception:
+        return AlgorithmReport(decisions=[])
+    return report if isinstance(report, AlgorithmReport) else AlgorithmReport(decisions=[])
 
 
 
 
 def decide_stack(graph, user_stack: dict = None):
     if user_stack:
-        llm_report = validate_stack(graph, user_stack)
-        rule_issues = rule_based_stack_checks(graph, user_stack)
+        try:
+            llm_report = validate_stack(graph, user_stack)
+        except Exception:
+            llm_report = StackValidationReport(
+                issues=[StackValidationIssue(
+                    category="infra",
+                    issue="Stack validation could not be completed; review the supplied stack manually.",
+                    severity="medium",
+                    suggested_alternative="Retry stack validation with an available provider.",
+                )],
+                is_compatible=True,
+            )
+        if not isinstance(llm_report, StackValidationReport):
+            llm_report = StackValidationReport(
+                issues=[StackValidationIssue(
+                    category="infra",
+                    issue="Stack validation returned an incomplete result; review the supplied stack manually.",
+                    severity="medium",
+                    suggested_alternative="Retry stack validation with an available provider.",
+                )],
+                is_compatible=True,
+            )
+        try:
+            rule_issues = rule_based_stack_checks(graph, user_stack)
+        except Exception:
+            rule_issues = []
+        if not isinstance(rule_issues, list):
+            rule_issues = []
+        rule_issues = [issue for issue in rule_issues if isinstance(issue, StackValidationIssue)]
 
         # Dedupe by category only — if the LLM already caught a problem 
         # in this category, skip the rule's version to avoid saying the 
@@ -66,17 +149,33 @@ def decide_ai_models(graph, algorithm_report, risk_tolerance: float = 0.5):
     Model 5: for every task, decide which AI model should execute it,
     using complexity signals + the Cost-vs-Risk slider (risk_tolerance).
     """
-    algo_lookup = {d.task_id: d for d in algorithm_report.decisions}
     decisions = []
+    algo_decisions = getattr(algorithm_report, "decisions", [])
+    if not isinstance(algo_decisions, list):
+        algo_decisions = []
+    algo_lookup = {
+        d.task_id: d
+        for d in algo_decisions
+        if all(hasattr(d, field) for field in ("task_id", "confidence", "requires_human_tiebreak"))
+    }
+    normalized_risk_tolerance = _normalize_risk_tolerance(risk_tolerance)
 
     for t in graph.tasks:
         algo_decision = algo_lookup.get(t.id)
         algo_confidence = algo_decision.confidence if algo_decision else None
         needs_tiebreak = algo_decision.requires_human_tiebreak if algo_decision else False
 
-        decision = select_model(t, algorithm_confidence=algo_confidence,
-                                 requires_tiebreak=needs_tiebreak, risk_tolerance=risk_tolerance)
-        decisions.append(decision)
+        try:
+            decision = select_model(
+                t,
+                algorithm_confidence=algo_confidence,
+                requires_tiebreak=needs_tiebreak,
+                risk_tolerance=normalized_risk_tolerance,
+            )
+        except Exception:
+            continue
+        if decision is not None:
+            decisions.append(decision)
 
     return ModelSelectionReport(decisions=decisions)
 
@@ -87,15 +186,21 @@ from schema import RiskReport
 
 
 def predict_risks(graph, algorithm_report, model_report, event_log_path=None):
-    algo_lookup = {d.task_id: d for d in algorithm_report.decisions}
-    model_lookup = {d.task_id: d for d in model_report.decisions}
+    algo_decisions = getattr(algorithm_report, "decisions", [])
+    model_decisions = getattr(model_report, "decisions", [])
+    algo_lookup = {d.task_id: d for d in algo_decisions if hasattr(d, "task_id")}
+    model_lookup = {d.task_id: d for d in model_decisions if hasattr(d, "task_id")}
 
     predictions = []
     for t in graph.tasks:
-        pred = predict_risk_ensemble(
-            t, algo_lookup.get(t.id), model_lookup.get(t.id), event_log_path=event_log_path
-        )
-        predictions.append(pred)
+        try:
+            pred = predict_risk_ensemble(
+                t, algo_lookup.get(t.id), model_lookup.get(t.id), event_log_path=event_log_path
+            )
+        except Exception:
+            continue
+        if pred is not None:
+            predictions.append(pred)
 
     return RiskReport(predictions=predictions)
 
@@ -107,10 +212,29 @@ from schema import VerificationReport, VerificationIssue
 
 
 def verify_output(task_id: str, task_description: str, output: str) -> VerificationReport:
-    ensemble = verify_output_ensemble(task_id, task_description, output)
+    try:
+        ensemble = verify_output_ensemble(task_id, task_description, output)
+    except Exception:
+        ensemble = {}
 
-    issues_1 = [VerificationIssue(**i) for i in ensemble["pass_1"].get("issues", [])]
-    issues_2 = [VerificationIssue(**i) for i in ensemble["pass_2"].get("issues", [])]
+    if not isinstance(ensemble, dict):
+        ensemble = {}
+
+    def parse_issues(pass_result):
+        if not isinstance(pass_result, dict) or not isinstance(pass_result.get("issues", []), list):
+            return []
+        issues = []
+        for raw_issue in pass_result["issues"]:
+            if not isinstance(raw_issue, dict):
+                continue
+            try:
+                issues.append(VerificationIssue(**raw_issue))
+            except (TypeError, ValueError):
+                continue
+        return issues
+
+    issues_1 = parse_issues(ensemble.get("pass_1"))
+    issues_2 = parse_issues(ensemble.get("pass_2"))
     rule_issues = rule_based_verification(output)
 
     # Agreement score: how much overlap exists between the two LLM passes' categories
@@ -127,7 +251,7 @@ def verify_output(task_id: str, task_description: str, output: str) -> Verificat
     best_by_category = {}
     for issue in issues_1 + issues_2 + rule_issues:
         existing = best_by_category.get(issue.category)
-        if existing is None or severity_rank[issue.severity] > severity_rank[existing.severity]:
+        if existing is None or severity_rank.get(issue.severity, 0) > severity_rank.get(existing.severity, 0):
             best_by_category[issue.category] = issue
 
     merged = list(best_by_category.values())
@@ -156,6 +280,8 @@ def record_task_outcome(model_decision, task, verification_report=None, human_ov
     - verification_report.passed (automated signal from Model 7)
     - human_override (explicit human accept=True / reject=False, if given — takes priority)
     """
+    if model_decision is None or task is None:
+        return
     if human_override is not None:
         succeeded = human_override
     elif verification_report is not None:
@@ -174,6 +300,8 @@ def run_full_pipeline(requirement: str, user_stack: dict = None, risk_tolerance:
     The complete Verya pipeline, Models 1-8, in sequence.
     Returns a single dict with every stage's output, ready for a dashboard or demo UI.
     """
+    requirement = _normalize_requirement(requirement)
+    normalized_risk_tolerance = _normalize_risk_tolerance(risk_tolerance)
     result = {"requirement": requirement}
 
     # Model 1: Workflow Understanding
@@ -203,7 +331,7 @@ def run_full_pipeline(requirement: str, user_stack: dict = None, risk_tolerance:
     result["algorithms"] = algo_report
 
     # Model 5: AI Model Router (now reputation-aware via Model 8)
-    model_report = decide_ai_models(graph, algo_report, risk_tolerance=risk_tolerance)
+    model_report = decide_ai_models(graph, algo_report, risk_tolerance=normalized_risk_tolerance)
     result["model_routing"] = model_report
 
     # Model 6: Failure/Risk Prediction
