@@ -124,6 +124,41 @@ def _parse_provider_configs(raw: str) -> list[dict]:
     ]
 
 
+class _ProviderResponseError(ValueError):
+    """A safe, user-facing description of a malformed provider response."""
+
+
+def _decode_provider_payload(raw_body: bytes) -> dict:
+    if not raw_body or not raw_body.strip():
+        raise _ProviderResponseError("empty response body")
+    try:
+        payload = json.loads(raw_body.decode())
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise _ProviderResponseError("response body was not valid JSON") from error
+    if not isinstance(payload, dict):
+        raise _ProviderResponseError("response JSON must be an object")
+    return payload
+
+
+def _extract_provider_content(payload: dict, protocol: str) -> object:
+    try:
+        if protocol == "gemini":
+            return payload["candidates"][0]["content"]["parts"][0]["text"]
+        content = payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as error:
+        expected = "Gemini candidates content" if protocol == "gemini" else "chat completion content"
+        raise _ProviderResponseError(f"response did not contain expected {expected}") from error
+
+    if isinstance(content, list):
+        content = "".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    if not isinstance(content, str) or not content.strip():
+        raise _ProviderResponseError("response content was missing or invalid")
+    return content
+
+
 def _task(task_id: str, name: str, task_type: str, description: str, depends_on: list[str] | None = None) -> Task:
     return Task(
         id=task_id,
@@ -239,7 +274,7 @@ def _configured_provider_graphs(requirement: str) -> list[WorkflowGraph]:
 def _request_provider_graphs(requirement: str, providers: list[dict]) -> list[WorkflowGraph]:
     requirement = _normalize_requirement(requirement)
     votes: list[WorkflowGraph] = []
-    for provider in providers:
+    for provider_index, provider in enumerate(providers, start=1):
         if not isinstance(provider, dict):
             continue
         provider = _normalize_provider_config(provider)
@@ -272,28 +307,27 @@ def _request_provider_graphs(requirement: str, providers: list[dict]) -> list[Wo
         request = urllib.request.Request(url, data=request_body, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=provider.get("timeout", 60)) as response:
-                payload = json.loads(response.read().decode())
-            if provider.get("protocol") == "gemini":
-                content = payload["candidates"][0]["content"]["parts"][0]["text"]
-            else:
-                message = payload["choices"][0]["message"]
-                content = message["content"]
-                if isinstance(content, list):
-                    content = "".join(
-                        part.get("text", "") if isinstance(part, dict) else str(part)
-                        for part in content
-                    )
-                if not isinstance(content, str):
-                    content = str(content)
+                payload = _decode_provider_payload(response.read())
+            content = _extract_provider_content(payload, provider["protocol"])
             content = _normalize_json_content(content)
-            graph = WorkflowGraph(**json.loads(content))
+            try:
+                graph_data = json.loads(content)
+            except json.JSONDecodeError as error:
+                raise _ProviderResponseError("provider content was not valid workflow JSON") from error
+            try:
+                graph = WorkflowGraph(**graph_data)
+            except (TypeError, ValueError) as error:
+                raise _ProviderResponseError("provider content was not a valid workflow graph") from error
             if graph.tasks:
                 votes.append(graph)
         except urllib.error.HTTPError as error:
-            print(f"  [Workflow API] {provider.get('name', provider['model'])}: HTTP {error.code}")
+            print(f"  [Workflow API] provider {provider_index}: HTTP {error.code}")
             continue
-        except (KeyError, TypeError, ValueError, urllib.error.URLError, TimeoutError) as error:
-            print(f"  [Workflow API] {provider.get('name', provider['model'])}: {error.__class__.__name__} ({error})")
+        except _ProviderResponseError as error:
+            print(f"  [Workflow API] provider {provider_index}: {error}")
+            continue
+        except (TypeError, ValueError, urllib.error.URLError, TimeoutError) as error:
+            print(f"  [Workflow API] provider {provider_index}: {error.__class__.__name__}")
             continue
 
     return votes
