@@ -4,3 +4,5 @@ networkx
 python-dotenv
 pm4py
 pytest
+gemini
+kimi

@@ -25,6 +25,6 @@
   },
   "glm-4.5::database": {
     "successes": 1,
-    "failures": 4
+    "failures": 3
   }
 }

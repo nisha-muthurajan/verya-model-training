@@ -1,7 +1,7 @@
 from algorithm_model import recommend_algorithms
 from model_catalog import get_catalog
 from risk_ensemble import RISK_ENGINES, predict_risk_ensemble
-from schema import AlgorithmDecision, Task
+from schema import Task
 
 
 def test_risk_ensemble_works_without_external_services():

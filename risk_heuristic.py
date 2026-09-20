@@ -39,6 +39,8 @@ def predict_risk_heuristic(task, algo_decision=None, model_decision=None) -> Ris
         severity = "high"
     elif score >= 0.25:
         severity = "medium"
+    elif score>=0.15:
+        severity="slightly low"
     else:
         severity = "low"
 

@@ -18,6 +18,7 @@ def test_workflow_ensemble_builds_valid_ecommerce_graph(monkeypatch):
     assert tasks_needing_algorithm_decision(graph)
 
 
+
 def test_workflow_ensemble_builds_valid_blog_graph(monkeypatch):
     for key in ("WORKFLOW_MODEL_ENDPOINTS", "WORKFLOW_REQUIRE_API", "GROQ_API_KEY", "ZAI_API_KEY", "OPENAI_API_KEY", "OPEN_AI_API_KEY", "GEMINI_API_KEY", "MINIMAX_API_KEY"):
         monkeypatch.delenv(key, raising=False)

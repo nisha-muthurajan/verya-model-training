@@ -7,7 +7,7 @@ def extract_features(task: Task, algo_decision: AlgorithmDecision = None,
                       model_decision: ModelSelectionDecision = None) -> dict:
     """
     Every signal here is something we ALREADY have from Models 1, 4, and 5 —
-    no new API calls needed. This is what makes Phase 2 training cheap:
+    no new api calls needed. This is what makes Phase 2 training cheap:
     the features already exist in your pipeline's own output.
     """
     text = f"{task.name} {task.description}".lower()

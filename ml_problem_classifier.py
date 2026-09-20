@@ -10,4 +10,4 @@ def classify_ml_problem_type(task_name: str, task_description: str, original_req
     if any(k in text for k in ["predict a number", "regression", "forecast", "price prediction", "estimate"]):
         return "regression_tabular"
 
-    return "classification_tabular"  # sensible default for recommendation/scoring-type ML tasks
+    return "classification_tabular"  
