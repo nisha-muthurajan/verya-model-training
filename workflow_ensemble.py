@@ -34,6 +34,25 @@ WORKFLOW_ADVISORS = (
 )
 
 
+def _normalize_requirement(requirement: str) -> str:
+    if not isinstance(requirement, str) or not requirement.strip():
+        raise ValueError("workflow requirement must be a non-empty string")
+    return requirement.strip()
+
+
+def _normalize_json_content(content: object) -> str:
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("workflow provider returned empty content")
+    content = content.strip()
+    if content.startswith("```") and content.endswith("```"):
+        content = content[3:-3].strip()
+        if content.lower().startswith("json"):
+            content = content[4:].lstrip()
+    if not content:
+        raise ValueError("workflow provider returned empty content")
+    return content
+
+
 def _task(task_id: str, name: str, task_type: str, description: str, depends_on: list[str] | None = None) -> Task:
     return Task(
         id=task_id,
@@ -45,6 +64,7 @@ def _task(task_id: str, name: str, task_type: str, description: str, depends_on:
 
 
 def _domain_tasks(requirement: str) -> list[Task]:
+    requirement = _normalize_requirement(requirement)
     text = requirement.lower()
     tasks = [
         _task("t1", "User Model & Storage", "database", "Store user accounts and application ownership data."),
@@ -97,7 +117,8 @@ def _domain_tasks(requirement: str) -> list[Task]:
 
 
 def _configured_provider_graphs(requirement: str) -> list[WorkflowGraph]:
-    endpoints = os.getenv("WORKFLOW_MODEL_ENDPOINTS")
+    requirement = _normalize_requirement(requirement)
+    endpoints = os.getenv("WORKFLOW_MODEL_ENDPOINTS", "").strip()
     if not endpoints:
         providers = []
         if os.getenv("GROQ_API_KEY"):
@@ -150,13 +171,20 @@ def _configured_provider_graphs(requirement: str) -> list[WorkflowGraph]:
 
 
 def _request_provider_graphs(requirement: str, providers: list[dict]) -> list[WorkflowGraph]:
+    requirement = _normalize_requirement(requirement)
     votes: list[WorkflowGraph] = []
     for provider in providers:
-        if not isinstance(provider, dict) or not provider.get("url") or not provider.get("model"):
+        if not isinstance(provider, dict):
             continue
+        url = provider.get("url")
+        model = provider.get("model")
+        if not isinstance(url, str) or not url.strip() or not isinstance(model, str) or not model.strip():
+            continue
+        url = url.strip()
+        model = model.strip()
         api_key = provider.get("api_key") or os.getenv(provider.get("api_key_env", ""), "")
         if provider.get("protocol") == "gemini":
-            url = provider["url"].format(model=provider["model"]) + f"?key={api_key}"
+            url = url.format(model=model) + f"?key={api_key}"
             request_body = json.dumps({
                 "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT + "\nReturn only valid JSON. Do not use markdown."}]},
                 "contents": [{"parts": [{"text": requirement}]}],
@@ -164,9 +192,8 @@ def _request_provider_graphs(requirement: str, providers: list[dict]) -> list[Wo
             }).encode()
             headers = {"Content-Type": "application/json"}
         else:
-            url = provider["url"]
             request_body = json.dumps({
-                "model": provider["model"],
+                "model": model,
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT + "\nReturn only valid JSON. Do not use markdown."},
                     {"role": "user", "content": requirement},
@@ -193,8 +220,7 @@ def _request_provider_graphs(requirement: str, providers: list[dict]) -> list[Wo
                     )
                 if not isinstance(content, str):
                     content = str(content)
-            if "```" in content:
-                content = content.replace("```json", "").replace("```", "").strip()
+            content = _normalize_json_content(content)
             graph = WorkflowGraph(**json.loads(content))
             if graph.tasks:
                 votes.append(graph)
@@ -236,6 +262,7 @@ def _consensus_graph(votes: list[WorkflowGraph]) -> WorkflowGraph:
 
 
 def understand_workflow_ensemble(requirement: str) -> WorkflowGraph:
+    requirement = _normalize_requirement(requirement)
     configured_graphs = _configured_provider_graphs(requirement)
     if configured_graphs:
         return _consensus_graph(configured_graphs)
@@ -248,8 +275,8 @@ def understand_workflow_ensemble(requirement: str) -> WorkflowGraph:
         or os.getenv("GEMINI_API_KEY")
         or os.getenv("MINIMAX_API_KEY")
     )
-    require_api = os.getenv("WORKFLOW_REQUIRE_API", "true" if api_configured else "false")
-    if require_api.lower() == "true":
+    require_api = os.getenv("WORKFLOW_REQUIRE_API", "true" if api_configured else "false").strip().lower()
+    if require_api == "true":
         raise RuntimeError(
             "No valid workflow model response received. Configure WORKFLOW_MODEL_ENDPOINTS "
             "or set WORKFLOW_REQUIRE_API=false for local development fallback."
