@@ -1,6 +1,6 @@
 import json
 
-from workflow_ensemble import understand_workflow_ensemble
+from workflow_ensemble import _normalize_provider_config, _parse_provider_configs, understand_workflow_ensemble
 
 
 class FakeResponse:
@@ -51,3 +51,18 @@ def test_workflow_require_api_fails_without_valid_response(monkeypatch):
         assert "No valid workflow model response" in str(error)
     else:
         raise AssertionError("strict API mode should reject local fallback")
+
+
+def test_workflow_provider_config_filters_invalid_entries():
+    assert _normalize_provider_config({"url": " https://example.invalid ", "model": " model ", "timeout": "15"})["timeout"] == 15.0
+    assert _normalize_provider_config({"url": "https://example.invalid", "model": "model", "protocol": " OPENAI-COMPATIBLE "})["protocol"] == "openai"
+    assert _normalize_provider_config({"url": "", "model": "model"}) is None
+    assert _normalize_provider_config({"url": "https://example.invalid", "model": "", "timeout": 0}) is None
+    assert _normalize_provider_config({"url": "https://example.invalid", "model": "model", "protocol": "unknown"}) is None
+
+    providers = _parse_provider_configs(json.dumps([
+        {"url": "https://valid.invalid", "model": "valid"},
+        {"url": "https://missing-model.invalid"},
+        "malformed",
+    ]))
+    assert [provider["model"] for provider in providers] == ["valid"]
