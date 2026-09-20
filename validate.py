@@ -4,6 +4,11 @@ from schema import WorkflowGraph
 
 def validate_graph(graph: WorkflowGraph) -> list[str]:
     """Returns a list of problems found. Empty list = valid."""
+    if not isinstance(graph, WorkflowGraph):
+        return ["workflow graph must be a WorkflowGraph"]
+    if not graph.tasks:
+        return ["workflow graph must contain at least one task"]
+
     errors = []
     ids = [t.id for t in graph.tasks]
 
